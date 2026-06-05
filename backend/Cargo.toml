@@ -1,0 +1,41 @@
+# `[workspace]` here makes this crate its own workspace root, so it is fully
+# isolated from the unrelated `rust-demo` package in the parent directory.
+[workspace]
+
+[package]
+name = "auth-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework + cookie extractor
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio = { version = "1", features = ["full"] }
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "macros",
+    "migrate",
+] }
+
+# Auth primitives
+argon2 = "0.5"          # Argon2id password hashing
+jsonwebtoken = "9"      # HS256 session tokens
+
+# Serialization / misc
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+time = "0.3"            # cookie Max-Age (matches the `cookie` crate's time)
+dotenvy = "0.15"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

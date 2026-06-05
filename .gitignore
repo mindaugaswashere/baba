@@ -1,0 +1,13 @@
+/target
+
+# Backend (Rust auth API)
+/backend/target
+/backend/.pgdata
+/backend/.env
+
+# Frontend (React)
+/frontend/node_modules
+/frontend/dist
+
+# Env files anywhere
+**/.env

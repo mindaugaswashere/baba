@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug rust-demo",
+      "cargo": {
+        "args": ["build", "--bin=rust-demo"]
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
