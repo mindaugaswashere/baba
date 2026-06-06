@@ -1,58 +1,76 @@
 #!/usr/bin/env bash
 #
-# Manage a self-contained, project-local PostgreSQL cluster.
+# Manage baba's database INSIDE the shared rust-demo PostgreSQL cluster.
 #
-# Why this exists: the machine already runs a system Postgres on :5432 that is
-# password-locked and not ours to administer. Instead of guessing secrets, we
-# stand up our own cluster (own data dir, own port, no sudo) that the project
-# fully owns. Credentials are generated once and written to backend/.env.
+# baba does NOT run its own cluster. It reuses one shared cluster (data dir at
+# ~/.local/pgdata, port 5432) that holds every project's database, but baba is
+# otherwise fully isolated: its own least-privilege role `baba`, its own
+# password, and its own database `baba`. Only the physical server is shared —
+# credentials are NOT.
+#
+# The shared cluster is bootstrapped by rust-demo's scripts/db.sh (it owns the
+# initdb). Cross-project coupling note: starting/stopping the cluster from here
+# affects every project using it, since it's the same physical cluster.
 #
 # Usage:
-#   ./scripts/db.sh init     # create cluster + role + database + .env (idempotent)
-#   ./scripts/db.sh start     # start the cluster
-#   ./scripts/db.sh stop      # stop the cluster
-#   ./scripts/db.sh status    # show cluster status
-#   ./scripts/db.sh psql      # open psql connected to the app database
-#   ./scripts/db.sh reset     # DROP the database and recreate it (destructive)
+#   ./scripts/db.sh init      # ensure shared cluster up + create role/db + write .env (idempotent)
+#   ./scripts/db.sh start     # start the shared cluster (rust-demo's data dir)
+#   ./scripts/db.sh stop      # stop the shared cluster  (⚠ also stops rust-demo)
+#   ./scripts/db.sh status    # show shared cluster status
+#   ./scripts/db.sh psql      # open psql connected to baba's database
+#   ./scripts/db.sh reset     # DROP baba's database and recreate it (destructive, baba only)
 #
 set -euo pipefail
 
 # --- Resolve locations -------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PGDATA="$BACKEND_DIR/.pgdata"
 ENV_FILE="$BACKEND_DIR/.env"
-LOGFILE="$PGDATA/server.log"
 
-# Pick the newest installed PostgreSQL bin dir (initdb/pg_ctl aren't on PATH).
+# The shared cluster lives in rust-demo's backend. Override via env if your
+# checkout is laid out differently.
+WORKSPACE_DIR="$(cd "$BACKEND_DIR/../.." && pwd)"
+SHARED_PGDATA="${SHARED_PGDATA:-$HOME/.local/pgdata}"
+LOGFILE="$SHARED_PGDATA/server.log"
+
+# Pick the newest installed PostgreSQL bin dir (psql/pg_ctl aren't on PATH).
 PG_BIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1 || true)"
-if [[ -z "${PG_BIN:-}" || ! -x "$PG_BIN/initdb" ]]; then
+if [[ -z "${PG_BIN:-}" || ! -x "$PG_BIN/psql" ]]; then
   echo "ERROR: could not find PostgreSQL binaries under /usr/lib/postgresql/*/bin" >&2
   exit 1
 fi
 
-# --- Cluster connection settings (the cluster itself) ------------------------
-PGPORT="${PGPORT:-5433}"
-SUPERUSER="postgres"          # bootstrap superuser (local trust auth)
-APP_USER="authapp"            # least-privilege application role
-APP_DB="auth_demo"
+# --- Connection settings -----------------------------------------------------
+PGPORT="${PGPORT:-5432}"      # shared cluster port (default Postgres port)
+SUPERUSER="postgres"          # local trust superuser on the shared cluster
+APP_USER="baba"               # baba's OWN least-privilege role
+APP_DB="baba"                 # baba's OWN isolated database within the shared cluster
 
-# psql talking to the cluster as the local trusted superuser over the unix socket.
-super_psql() { "$PG_BIN/psql" -h "$PGDATA" -p "$PGPORT" -U "$SUPERUSER" -d postgres -v ON_ERROR_STOP=1 "$@"; }
+# psql talking to the shared cluster as the local trusted superuser over its socket.
+super_psql() { "$PG_BIN/psql" -h "$SHARED_PGDATA" -p "$PGPORT" -U "$SUPERUSER" -d postgres -v ON_ERROR_STOP=1 "$@"; }
 
-is_running() { "$PG_BIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; }
+is_running() { "$PG_BIN/pg_ctl" -D "$SHARED_PGDATA" status >/dev/null 2>&1; }
+
+require_shared_cluster() {
+  if [[ ! -f "$SHARED_PGDATA/PG_VERSION" ]]; then
+    echo "ERROR: shared cluster not found at $SHARED_PGDATA" >&2
+    echo "       Initialize it first:  (cd $WORKSPACE_DIR/rust-demo/backend && ./scripts/db.sh init)" >&2
+    exit 1
+  fi
+}
 
 start_cluster() {
+  require_shared_cluster
   if is_running; then return 0; fi
-  echo "Starting cluster on 127.0.0.1:$PGPORT ..."
-  # -k sets the unix socket dir to the data dir; listen only on loopback.
-  "$PG_BIN/pg_ctl" -D "$PGDATA" -l "$LOGFILE" -w \
-    -o "-p $PGPORT -k $PGDATA -c listen_addresses=127.0.0.1" start
+  echo "Starting shared cluster on 127.0.0.1:$PGPORT ($SHARED_PGDATA) ..."
+  "$PG_BIN/pg_ctl" -D "$SHARED_PGDATA" -l "$LOGFILE" -w \
+    -o "-p $PGPORT -k $SHARED_PGDATA -c listen_addresses=127.0.0.1" start
 }
 
 stop_cluster() {
   if is_running; then
-    "$PG_BIN/pg_ctl" -D "$PGDATA" -m fast stop
+    echo "Stopping shared cluster (⚠ this also stops rust-demo) ..."
+    "$PG_BIN/pg_ctl" -D "$SHARED_PGDATA" -m fast stop
   else
     echo "Cluster not running."
   fi
@@ -66,8 +84,10 @@ write_env_if_missing() {
   jwt_secret="$(openssl rand -hex 32)"
   cat > "$ENV_FILE" <<EOF
 # Generated by scripts/db.sh — do NOT commit. See .env.example for the template.
+# baba shares one PostgreSQL cluster on :$PGPORT (same server, all projects) but
+# is otherwise isolated: its own role '$APP_USER', own password, own database '$APP_DB'.
 
-# --- Database (project-local cluster managed by scripts/db.sh) ---
+# --- Database (shared cluster at ~/.local/pgdata; bootstrapped by rust-demo) ---
 PGHOST=127.0.0.1
 PGPORT=$PGPORT
 PGDATABASE=$APP_DB
@@ -75,7 +95,7 @@ PGUSER=$APP_USER
 PGPASSWORD=$db_pw
 DATABASE_URL=postgres://$APP_USER:$db_pw@127.0.0.1:$PGPORT/$APP_DB
 
-# --- Auth ---
+# --- Auth (baba-specific secret) ---
 JWT_SECRET=$jwt_secret
 JWT_TTL_SECONDS=604800        # 7 days
 
@@ -85,7 +105,7 @@ COOKIE_NAME=auth_token
 COOKIE_SECURE=false           # set true when served over HTTPS
 CORS_ORIGIN=http://127.0.0.1:5174
 
-RUST_LOG=info,tower_http=info,auth_backend=debug
+RUST_LOG=info,tower_http=info,baba_backend=debug
 EOF
   chmod 600 "$ENV_FILE"
 }
@@ -97,7 +117,7 @@ load_app_creds() {
 
 ensure_role_and_db() {
   load_app_creds
-  # Create the app role if missing, and (re)set its password to match .env.
+  # Create baba's own role if missing, and (re)set its password to match .env.
   super_psql -c "DO \$\$ BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$APP_USER') THEN
         CREATE ROLE $APP_USER LOGIN PASSWORD '$PGPASSWORD';
@@ -105,27 +125,22 @@ ensure_role_and_db() {
         ALTER ROLE $APP_USER WITH LOGIN PASSWORD '$PGPASSWORD';
       END IF;
     END \$\$;"
-  # Create the database if missing (owned by the app role).
+  # Create the database if missing, otherwise make sure baba owns it (it may
+  # have been created earlier under a different owner).
   if ! super_psql -tAc "SELECT 1 FROM pg_database WHERE datname='$APP_DB'" | grep -q 1; then
     super_psql -c "CREATE DATABASE $APP_DB OWNER $APP_USER;"
+  else
+    super_psql -c "ALTER DATABASE $APP_DB OWNER TO $APP_USER;"
   fi
 }
 
 cmd_init() {
-  if [[ ! -f "$PGDATA/PG_VERSION" ]]; then
-    echo "Initializing new cluster in $PGDATA ..."
-    mkdir -p "$PGDATA"
-    chmod 700 "$PGDATA"
-    # local connections: trust (so we can administer without a password)
-    # host  connections: scram-sha-256 (the app authenticates with a password)
-    "$PG_BIN/initdb" -D "$PGDATA" -U "$SUPERUSER" -E UTF8 \
-      --auth-local=trust --auth-host=scram-sha-256 >/dev/null
-  fi
   start_cluster
   write_env_if_missing
   ensure_role_and_db
   echo
   echo "✅ Database ready:  postgres://$APP_USER:***@127.0.0.1:$PGPORT/$APP_DB"
+  echo "   Shared cluster:  $SHARED_PGDATA"
   echo "   Manage with: ./scripts/db.sh {start|stop|status|psql}"
 }
 
@@ -148,7 +163,7 @@ case "${1:-}" in
   init)   cmd_init ;;
   start)  start_cluster ;;
   stop)   stop_cluster ;;
-  status) "$PG_BIN/pg_ctl" -D "$PGDATA" status || true ;;
+  status) "$PG_BIN/pg_ctl" -D "$SHARED_PGDATA" status || true ;;
   psql)   shift; cmd_psql "$@" ;;
   reset)  cmd_reset ;;
   *) echo "Usage: $0 {init|start|stop|status|psql|reset}" >&2; exit 1 ;;

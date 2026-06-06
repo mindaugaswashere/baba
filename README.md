@@ -5,7 +5,7 @@ API, and PostgreSQL. Sessions are carried in a **secure, httpOnly cookie** (no
 tokens in `localStorage`), passwords are hashed with **Argon2id**, and the whole
 thing runs locally with **one command per side**.
 
-> The original tiny `rust-demo` (a hand-written HTTP server) still lives in
+> The original tiny `baba` (a hand-written HTTP server) still lives in
 > [`src/`](src/) + the root `Cargo.toml` and is unrelated to this app. The auth
 > app lives entirely in [`backend/`](backend/) and [`frontend/`](frontend/).
 

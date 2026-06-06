@@ -1,9 +1,9 @@
 # `[workspace]` here makes this crate its own workspace root, so it is fully
-# isolated from the unrelated `rust-demo` package in the parent directory.
+# isolated from the unrelated `baba` package in the parent directory.
 [workspace]
 
 [package]
-name = "auth-backend"
+name = "baba-backend"
 version = "0.1.0"
 edition = "2021"
 

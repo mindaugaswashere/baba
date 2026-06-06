@@ -1,4 +1,4 @@
-//! auth-backend: a small, secure-by-default authentication API.
+//! baba-backend: a small, secure-by-default authentication API.
 //!
 //! Endpoints (all under /api):
 //!   POST /api/auth/register  {email, password}  -> 201 {user} + session cookie
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    tracing::info!("auth-backend listening on http://{bind_addr}");
+    tracing::info!("baba-backend listening on http://{bind_addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
