@@ -1,0 +1,14 @@
+{
+  "name": "baba",
+  "private": true,
+  "version": "0.1.0",
+  "description": "One-command launcher for the baba full-stack auth app (Rust API + React/Vite UI).",
+  "scripts": {
+    "start": "concurrently --kill-others --names api,ui --prefix-colors blue,magenta \"cd backend && cargo run\" \"cd frontend && bun run dev\"",
+    "api": "cd backend && cargo run",
+    "ui": "cd frontend && bun run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  }
+}

@@ -1,4 +1,6 @@
 /target
+/node_modules
+/graphify-out
 
 # Backend (Rust auth API)
 /backend/target
